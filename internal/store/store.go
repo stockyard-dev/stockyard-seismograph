@@ -1,12 +1,23 @@
 package store
-import("database/sql";"fmt";"os";"path/filepath";"time";_ "modernc.org/sqlite")
-type DB struct{*sql.DB}
-type ErrorGroup struct{ID int64 `json:"id"`;Fingerprint string `json:"fingerprint"`;Message string `json:"message"`;Service string `json:"service"`;Level string `json:"level"`;Count int `json:"count"`;FirstSeen time.Time `json:"first_seen"`;LastSeen time.Time `json:"last_seen"`;Resolved bool `json:"resolved"`}
-func Open(d string)(*DB,error){os.MkdirAll(d,0755);dsn:=filepath.Join(d,"seismograph.db")+"?_journal_mode=WAL&_busy_timeout=5000";db,err:=sql.Open("sqlite",dsn);if err!=nil{return nil,fmt.Errorf("open: %w",err)};db.SetMaxOpenConns(1);migrate(db);return &DB{db},nil}
-func migrate(db *sql.DB){db.Exec(`CREATE TABLE IF NOT EXISTS error_groups(id INTEGER PRIMARY KEY AUTOINCREMENT,fingerprint TEXT NOT NULL UNIQUE,message TEXT NOT NULL,service TEXT DEFAULT '',level TEXT DEFAULT 'error',count INTEGER DEFAULT 1,first_seen DATETIME DEFAULT CURRENT_TIMESTAMP,last_seen DATETIME DEFAULT CURRENT_TIMESTAMP,resolved INTEGER DEFAULT 0)`)}
-func(db *DB)Ingest(service,level,message,fingerprint string)error{if fingerprint==""{fingerprint=fmt.Sprintf("%s:%s",service,message[:min(len(message),100)])};_,err:=db.Exec(`INSERT INTO error_groups(fingerprint,message,service,level)VALUES(?,?,?,?) ON CONFLICT(fingerprint) DO UPDATE SET count=count+1,last_seen=CURRENT_TIMESTAMP,resolved=0`,fingerprint,message,service,level);return err}
-func min(a,b int)int{if a<b{return a};return b}
-func(db *DB)List(resolved bool)([]ErrorGroup,error){r:=0;if resolved{r=1};rows,_:=db.Query(`SELECT id,fingerprint,message,service,level,count,first_seen,last_seen,resolved FROM error_groups WHERE resolved=? ORDER BY last_seen DESC LIMIT 200`,r);defer rows.Close();var out[]ErrorGroup;for rows.Next(){var e ErrorGroup;var res int;rows.Scan(&e.ID,&e.Fingerprint,&e.Message,&e.Service,&e.Level,&e.Count,&e.FirstSeen,&e.LastSeen,&res);e.Resolved=res==1;out=append(out,e)};return out,nil}
-func(db *DB)Resolve(id int64){db.Exec(`UPDATE error_groups SET resolved=1 WHERE id=?`,id)}
-func(db *DB)Delete(id int64){db.Exec(`DELETE FROM error_groups WHERE id=?`,id)}
-func(db *DB)Stats()(map[string]interface{},error){var total,unresolved int;db.QueryRow(`SELECT COUNT(*) FROM error_groups`).Scan(&total);db.QueryRow(`SELECT COUNT(*) FROM error_groups WHERE resolved=0`).Scan(&unresolved);return map[string]interface{}{"total":total,"unresolved":unresolved},nil}
+import ("database/sql";"fmt";"os";"path/filepath";"time";_ "modernc.org/sqlite")
+type DB struct{db *sql.DB}
+type Event struct{
+	ID string `json:"id"`
+	Type string `json:"type"`
+	Magnitude float64 `json:"magnitude"`
+	Source string `json:"source"`
+	Data string `json:"data"`
+	Severity string `json:"severity"`
+	CreatedAt string `json:"created_at"`
+}
+func Open(d string)(*DB,error){if err:=os.MkdirAll(d,0755);err!=nil{return nil,err};db,err:=sql.Open("sqlite",filepath.Join(d,"seismograph.db")+"?_journal_mode=WAL&_busy_timeout=5000");if err!=nil{return nil,err}
+db.Exec(`CREATE TABLE IF NOT EXISTS events(id TEXT PRIMARY KEY,type TEXT NOT NULL,magnitude REAL DEFAULT 0,source TEXT DEFAULT '',data TEXT DEFAULT '',severity TEXT DEFAULT 'info',created_at TEXT DEFAULT(datetime('now')))`)
+return &DB{db:db},nil}
+func(d *DB)Close()error{return d.db.Close()}
+func genID()string{return fmt.Sprintf("%d",time.Now().UnixNano())}
+func now()string{return time.Now().UTC().Format(time.RFC3339)}
+func(d *DB)Create(e *Event)error{e.ID=genID();e.CreatedAt=now();_,err:=d.db.Exec(`INSERT INTO events(id,type,magnitude,source,data,severity,created_at)VALUES(?,?,?,?,?,?,?)`,e.ID,e.Type,e.Magnitude,e.Source,e.Data,e.Severity,e.CreatedAt);return err}
+func(d *DB)Get(id string)*Event{var e Event;if d.db.QueryRow(`SELECT id,type,magnitude,source,data,severity,created_at FROM events WHERE id=?`,id).Scan(&e.ID,&e.Type,&e.Magnitude,&e.Source,&e.Data,&e.Severity,&e.CreatedAt)!=nil{return nil};return &e}
+func(d *DB)List()[]Event{rows,_:=d.db.Query(`SELECT id,type,magnitude,source,data,severity,created_at FROM events ORDER BY created_at DESC`);if rows==nil{return nil};defer rows.Close();var o []Event;for rows.Next(){var e Event;rows.Scan(&e.ID,&e.Type,&e.Magnitude,&e.Source,&e.Data,&e.Severity,&e.CreatedAt);o=append(o,e)};return o}
+func(d *DB)Delete(id string)error{_,err:=d.db.Exec(`DELETE FROM events WHERE id=?`,id);return err}
+func(d *DB)Count()int{var n int;d.db.QueryRow(`SELECT COUNT(*) FROM events`).Scan(&n);return n}
