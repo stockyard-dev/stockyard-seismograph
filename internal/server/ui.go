@@ -1,27 +1,150 @@
 package server
+
 import "net/http"
-func(s *Server)dashboard(w http.ResponseWriter,r *http.Request){w.Header().Set("Content-Type","text/html; charset=utf-8");w.Write([]byte(dashHTML))}
-const dashHTML=`<!DOCTYPE html><html><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Seismograph</title>
-<style>:root{--bg:#1a1410;--bg2:#241e18;--bg3:#2e261e;--rust:#c45d2c;--rl:#e8753a;--leather:#a0845c;--cream:#f0e6d3;--cm:#7a7060;--gold:#d4a843;--green:#4a9e5c;--mono:'JetBrains Mono',Consolas,monospace;--serif:'Libre Baskerville',Georgia,serif}*{margin:0;padding:0;box-sizing:border-box}body{background:var(--bg);color:var(--cream);font-family:var(--mono);font-size:13px;line-height:1.6}.hdr{padding:.6rem 1.2rem;border-bottom:1px solid var(--bg3);display:flex;justify-content:space-between;align-items:center}.hdr h1{font-family:var(--serif);font-size:1rem}.hdr h1 span{color:var(--rl)}.sub{font-size:.65rem;color:var(--cm)}.main{max-width:700px;margin:0 auto;padding:1rem}.search{width:100%;background:var(--bg2);border:1px solid var(--bg3);color:var(--cream);padding:.4rem .6rem;font-family:var(--mono);font-size:.78rem;margin-bottom:.6rem;outline:none}.search:focus{border-color:var(--rust)}.stats{display:flex;gap:1rem;margin-bottom:.8rem;flex-wrap:wrap}.stat{text-align:center}.stat-n{font-size:1.2rem;color:var(--rl);font-family:var(--serif)}.stat-l{font-size:.55rem;color:var(--cm);text-transform:uppercase;letter-spacing:1px}.btn{font-family:var(--mono);font-size:.68rem;padding:.3rem .6rem;border:1px solid;cursor:pointer;background:transparent}.btn-p{border-color:var(--rust);color:var(--rl)}.btn-p:hover{background:var(--rust);color:var(--cream)}.item{background:var(--bg2);border:1px solid var(--bg3);padding:.6rem;margin-bottom:.3rem;cursor:pointer;transition:border-color .15s}.item:hover{border-color:var(--leather)}.item h3{font-size:.82rem;margin-bottom:.15rem}.item-meta{font-size:.65rem;color:var(--cm);display:flex;gap:.5rem;flex-wrap:wrap}.empty{text-align:center;padding:2rem;color:var(--cm);font-style:italic;font-family:var(--serif)}.modal-bg{position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,.65);display:flex;align-items:center;justify-content:center;z-index:100}.modal{background:var(--bg2);border:1px solid var(--bg3);padding:1.5rem;width:90%;max-width:500px;max-height:90vh;overflow-y:auto}.modal h2{font-family:var(--serif);font-size:.9rem;margin-bottom:1rem}label.fl{display:block;font-size:.65rem;color:var(--leather);text-transform:uppercase;letter-spacing:1px;margin-bottom:.2rem;margin-top:.5rem}input[type=text],input[type=number]{background:var(--bg);border:1px solid var(--bg3);color:var(--cream);padding:.35rem .5rem;font-family:var(--mono);font-size:.78rem;width:100%;outline:none}.del{color:var(--cm);cursor:pointer;font-size:.65rem;float:right}.del:hover{color:var(--rust)}</style></head>
-<body><div class="hdr"><div><h1><span>Stockyard</span> Seismograph</h1><div class="sub">Self-hosted error tracker</div></div><button class="btn btn-p" onclick="showModal()">+ New</button></div>
-<div class="main"><div id="upgrade-banner" style="display:none;background:#241e18;border:1px solid #8b3d1a;border-left:3px solid #c45d2c;padding:.6rem 1rem;font-size:.78rem;color:#bfb5a3;margin-bottom:.8rem"><strong style="color:#f0e6d3">Free tier</strong> — 10 items max. <a href="https://stockyard.dev/seismograph/" target="_blank" style="color:#e8753a">Upgrade to Pro →</a></div><div class="stats" id="stats"></div>
-<input class="search" id="search" placeholder="Search events..." oninput="debounceSearch()">
-<div id="list"></div></div>
-<div class="modal-bg" id="modal" style="display:none" onclick="if(event.target===this)hideModal()"><div class="modal"><h2 id="mt">New Event</h2>
-<label class="fl">Name</label><input type="text" id="f-name" placeholder="Name"><label class="fl">Source</label><input type="text" id="f-source" placeholder="Source"><label class="fl">Severity</label><input type="text" id="f-severity" placeholder="Severity"><label class="fl">Payload</label><input type="text" id="f-payload" placeholder="Payload"><label class="fl">Tags</label><input type="text" id="f-tags" placeholder="Tags"><label class="fl">Acknowledged</label><input type="number" id="f-acknowledged" placeholder="Acknowledged"><label class="fl">Status</label><input type="text" id="f-status" placeholder="Status">
-<div style="margin-top:1rem;display:flex;gap:.5rem"><button class="btn btn-p" onclick="save()">Save</button><button class="btn" style="color:var(--cm);border-color:var(--bg3)" onclick="hideModal()">Cancel</button></div></div></div>
+
+func (s *Server) dashboard(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "text/html")
+	w.Write([]byte(dashboardHTML))
+}
+
+const dashboardHTML = `<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1.0">
+<title>Seismograph</title>
+<style>
+:root{--bg:#1a1410;--bg2:#241e18;--bg3:#2e261e;--rust:#e8753a;--leather:#a0845c;--cream:#f0e6d3;--cd:#bfb5a3;--cm:#7a7060;--gold:#d4a843;--green:#4a9e5c;--red:#c94444;--orange:#d4843a;--blue:#4a7ec9;--mono:'JetBrains Mono',monospace;--serif:'Libre Baskerville',serif}
+*{margin:0;padding:0;box-sizing:border-box}body{background:var(--bg);color:var(--cream);font-family:var(--serif);line-height:1.6}
+.header{padding:1rem 1.5rem;border-bottom:1px solid var(--bg3);display:flex;justify-content:space-between;align-items:center}
+.header h1{font-family:var(--mono);font-size:.9rem;letter-spacing:2px}
+.stats-bar{display:flex;gap:1.5rem;font-family:var(--mono);font-size:.7rem}
+.stat-item{display:flex;align-items:center;gap:.3rem}
+.stat-dot{width:6px;height:6px;border-radius:50%}
+.filters{padding:.8rem 1.5rem;border-bottom:1px solid var(--bg3);display:flex;gap:.5rem;flex-wrap:wrap}
+.filter-btn{font-family:var(--mono);font-size:.65rem;padding:.25rem .6rem;border:1px solid var(--bg3);background:var(--bg);color:var(--cm);cursor:pointer}
+.filter-btn:hover{border-color:var(--leather);color:var(--cream)}
+.filter-btn.active{border-color:var(--rust);color:var(--rust)}
+.content{padding:1rem 1.5rem;max-width:1000px;margin:0 auto}
+.error-row{border:1px solid var(--bg3);background:var(--bg2);margin-bottom:.5rem;cursor:pointer;transition:border-color .15s}
+.error-row:hover{border-color:var(--leather)}
+.error-top{padding:.8rem 1rem;display:flex;align-items:flex-start;gap:.8rem}
+.level-badge{font-family:var(--mono);font-size:.55rem;padding:.15rem .4rem;text-transform:uppercase;letter-spacing:1px;flex-shrink:0;margin-top:.15rem}
+.level-fatal{background:#c9444433;color:#ff6b6b;border:1px solid #c9444455}
+.level-error{background:#c9444422;color:var(--red);border:1px solid #c9444444}
+.level-warning{background:#d4843a22;color:var(--orange);border:1px solid #d4843a44}
+.level-info{background:#4a7ec922;color:var(--blue);border:1px solid #4a7ec944}
+.level-debug{background:var(--bg3);color:var(--cm);border:1px solid var(--bg3)}
+.error-info{flex:1;min-width:0}
+.error-title{font-family:var(--mono);font-size:.8rem;margin-bottom:.15rem;word-break:break-all}
+.error-meta{font-family:var(--mono);font-size:.6rem;color:var(--cm);display:flex;gap:1rem;flex-wrap:wrap}
+.error-right{display:flex;flex-direction:column;align-items:flex-end;gap:.3rem;flex-shrink:0}
+.count-badge{font-family:var(--mono);font-size:.7rem;background:var(--bg3);padding:.1rem .5rem;color:var(--cd)}
+.status-badge{font-family:var(--mono);font-size:.55rem;padding:.1rem .4rem;text-transform:uppercase;letter-spacing:1px}
+.status-open{color:var(--red);border:1px solid #c9444444}
+.status-acknowledged{color:var(--orange);border:1px solid #d4843a44}
+.status-resolved{color:var(--green);border:1px solid #4a9e5c44}
+.status-ignored{color:var(--cm);border:1px solid var(--bg3)}
+.error-detail{display:none;padding:0 1rem 1rem;border-top:1px solid var(--bg3);margin-top:0}
+.error-detail.open{display:block}
+.stack-trace{background:#0d0b09;padding:.8rem;font-family:var(--mono);font-size:.7rem;color:var(--cd);white-space:pre-wrap;overflow-x:auto;margin:.5rem 0;line-height:1.8}
+.actions{display:flex;gap:.4rem;margin-top:.5rem}
+.btn{font-family:var(--mono);font-size:.6rem;padding:.25rem .6rem;cursor:pointer;border:1px solid var(--bg3);background:var(--bg);color:var(--cd)}.btn:hover{border-color:var(--leather);color:var(--cream)}
+.empty{text-align:center;padding:3rem;color:var(--cm);font-style:italic}
+</style>
+</head>
+<body>
+<div class="header">
+  <h1>SEISMOGRAPH</h1>
+  <div class="stats-bar" id="statsBar"></div>
+</div>
+<div class="filters" id="filters"></div>
+<div class="content" id="main"></div>
+
 <script>
-const API="/api/events";let editId=null,timer=null,curFilter="";
-function stc(s){return{"active":"#4a9e5c","open":"#4a9e5c","available":"#4a9e5c","growing":"#4a9e5c","done":"#4a9e5c","completed":"#4a9e5c","published":"#4a9e5c","resolved":"#4a9e5c","decided":"#4a9e5c","closed_won":"#4a9e5c","converted":"#4a9e5c","live":"#4a9e5c","applied":"#4a9e5c","sent":"#4a9e5c","approved":"#4a9e5c","booked":"#d4a843","in_progress":"#d4a843","processing":"#d4a843","reading":"#d4a843","investigating":"#d4a843","identified":"#d4a843","monitoring":"#d4a843","deploying":"#d4a843","qualified":"#d4a843","proposal":"#d4a843","negotiation":"#d4a843","assigned":"#d4a843","contacted":"#d4a843","pending":"#a0845c","draft":"#a0845c","unread":"#a0845c","new":"#a0845c","lead":"#a0845c","planning":"#a0845c","proposed":"#a0845c","trial":"#a0845c","failed":"#c45d2c","closed":"#7a7060","archived":"#7a7060","inactive":"#7a7060","closed_lost":"#c45d2c","churned":"#c45d2c","declined":"#c45d2c","rejected":"#c45d2c","rolled_back":"#c45d2c","superseded":"#7a7060","dormant":"#7a7060","paused":"#7a7060","stalled":"#c45d2c","away":"#a0845c","busy":"#c45d2c","offline":"#7a7060","dnd":"#c45d2c","bronze":"#a0845c","silver":"#bfb5a3","gold":"#d4a843","platinum":"#f0e6d3"}[s]||"#7a7060"}
-function showModal(id){editId=id||null;document.getElementById("mt").textContent=id?"Edit":"New";if(id){fetch(API+"/"+id).then(r=>r.json()).then(e=>{document.getElementById("f-name").value=e.name||"";document.getElementById("f-source").value=e.source||"";document.getElementById("f-severity").value=e.severity||"";document.getElementById("f-payload").value=e.payload||"";document.getElementById("f-tags").value=e.tags||"";document.getElementById("f-acknowledged").value=e.acknowledged||"";document.getElementById("f-status").value=e.status||"";})}else{document.getElementById("f-name").value="";document.getElementById("f-source").value="";document.getElementById("f-severity").value="";document.getElementById("f-payload").value="";document.getElementById("f-tags").value="";document.getElementById("f-acknowledged").value="";document.getElementById("f-status").value=""}document.getElementById("modal").style.display="flex"}
-function hideModal(){document.getElementById("modal").style.display="none";editId=null}
-function debounceSearch(){clearTimeout(timer);timer=setTimeout(load,300)}
-function filterBy(v){curFilter=v;load()}
-async function loadStats(){const r=await fetch("/api/stats");const d=await r.json();const el=document.getElementById("stats");let h='<div class="stat"><div class="stat-n">'+d.total+'</div><div class="stat-l">Total</div></div>';if(d.by_status){for(const[k,v]of Object.entries(d.by_status)){h+='<div class="stat"><div class="stat-n" style="color:'+stc(k)+'">'+v+'</div><div class="stat-l">'+k.replace(/_/g," ")+'</div></div>'}};el.innerHTML=h}
-async function load(){let url=API;const q=document.getElementById("search").value;const p=[];if(q)p.push("q="+encodeURIComponent(q));if(curFilter)p.push("status="+curFilter);if(p.length)url+="?"+p.join("&");const r=await fetch(url);const d=await r.json();const items=d.events||[];const el=document.getElementById("list");if(!items.length){el.innerHTML='<div class="empty">No events yet</div>';loadStats();return}
-el.innerHTML=items.map(e=>{return '<div class="item" ondblclick="showModal(\''+e.id+'\')"><span class="del" onclick="event.stopPropagation();del(\''+e.id+'\')">x</span><h3>'+e.name+'</h3><div class="item-meta"><span>${e.source||"\u2014"}</span><span>${e.severity||"\u2014"}</span><span>${e.payload||"\u2014"}</span><span>${e.tags||"\u2014"}</span></div></div>'}).join("");loadStats()}
-async function save(){const body={"name":document.getElementById("f-name").value,"source":document.getElementById("f-source").value,"severity":document.getElementById("f-severity").value,"payload":document.getElementById("f-payload").value,"tags":document.getElementById("f-tags").value,"acknowledged":parseInt(document.getElementById("f-acknowledged").value)||0,"status":document.getElementById("f-status").value};const method=editId?"PUT":"POST";const url=editId?API+"/"+editId:API;await fetch(url,{method,headers:{"Content-Type":"application/json"},body:JSON.stringify(body)});hideModal();load()}
-async function del(id){await fetch(API+"/"+id,{method:"DELETE"});load()}
-load();loadStats()
-fetch('/api/tier').then(r=>r.json()).then(j=>{if(j.tier==='free'){var b=document.getElementById('upgrade-banner');if(b)b.style.display='block'}}).catch(()=>{var b=document.getElementById('upgrade-banner');if(b)b.style.display='block'});
-</script></body></html>`
+const API='/api';
+let errors=[],sources=[],filterLevel='',filterStatus='',filterSource='';
+
+async function load(){
+  const[e,src,st]=await Promise.all([
+    fetch(API+'/errors').then(r=>r.json()),
+    fetch(API+'/sources').then(r=>r.json()),
+    fetch(API+'/stats').then(r=>r.json()),
+  ]);
+  errors=e.errors||[];sources=src.sources||[];
+  renderStats(st);renderFilters();render();
+}
+
+function renderStats(st){
+  document.getElementById('statsBar').innerHTML=
+    '<div class="stat-item"><div class="stat-dot" style="background:var(--red)"></div>'+st.open+' open</div>'+
+    '<div class="stat-item"><div class="stat-dot" style="background:var(--orange)"></div>'+st.acknowledged+' acked</div>'+
+    '<div class="stat-item"><div class="stat-dot" style="background:var(--green)"></div>'+st.resolved+' resolved</div>'+
+    '<div class="stat-item" style="color:var(--cm)">'+st.total+' total</div>';
+}
+
+function renderFilters(){
+  let h='<span style="font-family:var(--mono);font-size:.6rem;color:var(--cm);padding:.25rem 0">FILTER:</span>';
+  ['','fatal','error','warning','info'].forEach(l=>{
+    h+='<button class="filter-btn'+(filterLevel===l?' active':'')+'" onclick="setLevel(\''+l+'\')">'+(!l?'All levels':l)+'</button>';
+  });
+  h+='<span style="width:1px;background:var(--bg3);margin:0 .3rem"></span>';
+  ['','open','acknowledged','resolved','ignored'].forEach(s=>{
+    h+='<button class="filter-btn'+(filterStatus===s?' active':'')+'" onclick="setStatusFilter(\''+s+'\')">'+(!s?'All status':s)+'</button>';
+  });
+  if(sources.length){
+    h+='<span style="width:1px;background:var(--bg3);margin:0 .3rem"></span>';
+    h+='<button class="filter-btn'+(filterSource===''?' active':'')+'" onclick="setSource(\'\')">All sources</button>';
+    sources.forEach(s=>{h+='<button class="filter-btn'+(filterSource===s?' active':'')+'" onclick="setSource(\''+s+'\')">'+esc(s)+'</button>';});
+  }
+  document.getElementById('filters').innerHTML=h;
+}
+
+function setLevel(l){filterLevel=l;applyFilters();}
+function setStatusFilter(s){filterStatus=s;applyFilters();}
+function setSource(s){filterSource=s;applyFilters();}
+async function applyFilters(){
+  let url=API+'/errors?';
+  if(filterLevel)url+='level='+filterLevel+'&';
+  if(filterStatus)url+='status='+filterStatus+'&';
+  if(filterSource)url+='source='+encodeURIComponent(filterSource)+'&';
+  const r=await fetch(url).then(r=>r.json());
+  errors=r.errors||[];renderFilters();render();
+}
+
+function render(){
+  const m=document.getElementById('main');
+  if(!errors.length){m.innerHTML='<div class="empty">No errors captured yet. POST to /api/errors to start tracking.</div>';return;}
+  let h='';
+  errors.forEach((e,i)=>{
+    h+='<div class="error-row" onclick="toggle('+i+')"><div class="error-top"><span class="level-badge level-'+e.level+'">'+e.level+'</span><div class="error-info"><div class="error-title">'+esc(e.title)+'</div><div class="error-meta"><span>'+esc(e.source||'unknown')+'</span><span>first: '+fmtTime(e.first_seen)+'</span><span>last: '+fmtTime(e.last_seen)+'</span></div></div><div class="error-right"><span class="count-badge">'+e.count+'×</span><span class="status-badge status-'+e.status+'">'+e.status+'</span></div></div>';
+    h+='<div class="error-detail" id="detail-'+i+'">';
+    if(e.message&&e.message!==e.title)h+='<div style="font-size:.82rem;color:var(--cd);margin:.5rem 0">'+esc(e.message)+'</div>';
+    if(e.stack)h+='<div class="stack-trace">'+esc(e.stack)+'</div>';
+    if(e.metadata&&e.metadata!=='{}')h+='<div style="font-family:var(--mono);font-size:.65rem;color:var(--cm);margin:.3rem 0">Metadata: '+esc(e.metadata)+'</div>';
+    h+='<div style="font-family:var(--mono);font-size:.6rem;color:var(--cm)">Fingerprint: '+e.fingerprint+'</div>';
+    h+='<div class="actions">';
+    if(e.status==='open')h+='<button class="btn" onclick="event.stopPropagation();setStatus(\''+e.id+'\',\'acknowledged\')">Acknowledge</button>';
+    if(e.status!=='resolved')h+='<button class="btn" onclick="event.stopPropagation();setStatus(\''+e.id+'\',\'resolved\')">Resolve</button>';
+    if(e.status!=='ignored')h+='<button class="btn" onclick="event.stopPropagation();setStatus(\''+e.id+'\',\'ignored\')">Ignore</button>';
+    if(e.status!=='open')h+='<button class="btn" onclick="event.stopPropagation();setStatus(\''+e.id+'\',\'open\')">Reopen</button>';
+    h+='<button class="btn" onclick="event.stopPropagation();del(\''+e.id+'\')" style="color:var(--red)">Delete</button>';
+    h+='</div></div></div>';
+  });
+  m.innerHTML=h;
+}
+
+function toggle(i){document.getElementById('detail-'+i).classList.toggle('open');}
+
+async function setStatus(id,status){
+  await fetch(API+'/errors/'+id+'/status',{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify({status})});
+  load();
+}
+async function del(id){if(confirm('Delete this error group and all occurrences?')){await fetch(API+'/errors/'+id,{method:'DELETE'});load();}}
+
+function esc(s){if(!s)return'';const d=document.createElement('div');d.textContent=s;return d.innerHTML;}
+function fmtTime(t){if(!t)return'';const d=new Date(t);return d.toLocaleDateString()+' '+d.toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'});}
+
+load();
+</script>
+</body>
+</html>`

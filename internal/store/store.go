@@ -1,48 +1,234 @@
 package store
-import ("database/sql";"fmt";"os";"path/filepath";"time";_ "modernc.org/sqlite")
-type DB struct{db *sql.DB}
-type Event struct {
-	ID string `json:"id"`
-	Name string `json:"name"`
-	Source string `json:"source"`
-	Severity string `json:"severity"`
-	Payload string `json:"payload"`
-	Tags string `json:"tags"`
-	Acknowledged int `json:"acknowledged"`
-	Status string `json:"status"`
-	CreatedAt string `json:"created_at"`
-}
-func Open(d string)(*DB,error){if err:=os.MkdirAll(d,0755);err!=nil{return nil,err};db,err:=sql.Open("sqlite",filepath.Join(d,"seismograph.db")+"?_journal_mode=WAL&_busy_timeout=5000");if err!=nil{return nil,err}
-db.Exec(`CREATE TABLE IF NOT EXISTS events(id TEXT PRIMARY KEY,name TEXT NOT NULL,source TEXT DEFAULT '',severity TEXT DEFAULT 'info',payload TEXT DEFAULT '{}',tags TEXT DEFAULT '',acknowledged INTEGER DEFAULT 0,status TEXT DEFAULT 'active',created_at TEXT DEFAULT(datetime('now')))`)
-return &DB{db:db},nil}
-func(d *DB)Close()error{return d.db.Close()}
-func genID()string{return fmt.Sprintf("%d",time.Now().UnixNano())}
-func now()string{return time.Now().UTC().Format(time.RFC3339)}
-func(d *DB)Create(e *Event)error{e.ID=genID();e.CreatedAt=now();_,err:=d.db.Exec(`INSERT INTO events(id,name,source,severity,payload,tags,acknowledged,status,created_at)VALUES(?,?,?,?,?,?,?,?,?)`,e.ID,e.Name,e.Source,e.Severity,e.Payload,e.Tags,e.Acknowledged,e.Status,e.CreatedAt);return err}
-func(d *DB)Get(id string)*Event{var e Event;if d.db.QueryRow(`SELECT id,name,source,severity,payload,tags,acknowledged,status,created_at FROM events WHERE id=?`,id).Scan(&e.ID,&e.Name,&e.Source,&e.Severity,&e.Payload,&e.Tags,&e.Acknowledged,&e.Status,&e.CreatedAt)!=nil{return nil};return &e}
-func(d *DB)List()[]Event{rows,_:=d.db.Query(`SELECT id,name,source,severity,payload,tags,acknowledged,status,created_at FROM events ORDER BY created_at DESC`);if rows==nil{return nil};defer rows.Close();var o []Event;for rows.Next(){var e Event;rows.Scan(&e.ID,&e.Name,&e.Source,&e.Severity,&e.Payload,&e.Tags,&e.Acknowledged,&e.Status,&e.CreatedAt);o=append(o,e)};return o}
-func(d *DB)Update(e *Event)error{_,err:=d.db.Exec(`UPDATE events SET name=?,source=?,severity=?,payload=?,tags=?,acknowledged=?,status=? WHERE id=?`,e.Name,e.Source,e.Severity,e.Payload,e.Tags,e.Acknowledged,e.Status,e.ID);return err}
-func(d *DB)Delete(id string)error{_,err:=d.db.Exec(`DELETE FROM events WHERE id=?`,id);return err}
-func(d *DB)Count()int{var n int;d.db.QueryRow(`SELECT COUNT(*) FROM events`).Scan(&n);return n}
 
-func(d *DB)Search(q string, filters map[string]string)[]Event{
-    where:="1=1"
-    args:=[]any{}
-    if q!=""{
-        where+=" AND (name LIKE ?)"
-        args=append(args,"%"+q+"%");
-    }
-    if v,ok:=filters["source"];ok&&v!=""{where+=" AND source=?";args=append(args,v)}
-    if v,ok:=filters["severity"];ok&&v!=""{where+=" AND severity=?";args=append(args,v)}
-    if v,ok:=filters["status"];ok&&v!=""{where+=" AND status=?";args=append(args,v)}
-    rows,_:=d.db.Query(`SELECT id,name,source,severity,payload,tags,acknowledged,status,created_at FROM events WHERE `+where+` ORDER BY created_at DESC`,args...)
-    if rows==nil{return nil};defer rows.Close()
-    var o []Event;for rows.Next(){var e Event;rows.Scan(&e.ID,&e.Name,&e.Source,&e.Severity,&e.Payload,&e.Tags,&e.Acknowledged,&e.Status,&e.CreatedAt);o=append(o,e)};return o
+import (
+	"crypto/sha256"
+	"database/sql"
+	"fmt"
+	"os"
+	"path/filepath"
+	"time"
+
+	_ "modernc.org/sqlite"
+)
+
+type DB struct{ db *sql.DB }
+
+type ErrorEvent struct {
+	ID          string `json:"id"`
+	Fingerprint string `json:"fingerprint"`
+	Title       string `json:"title"`
+	Message     string `json:"message"`
+	Level       string `json:"level"` // debug, info, warning, error, fatal
+	Source      string `json:"source"`
+	Stack       string `json:"stack"`
+	Metadata    string `json:"metadata"` // JSON blob
+	Status      string `json:"status"`   // open, acknowledged, resolved, ignored
+	Count       int    `json:"count"`
+	FirstSeen   string `json:"first_seen"`
+	LastSeen    string `json:"last_seen"`
 }
 
-func(d *DB)Stats()map[string]any{
-    m:=map[string]any{"total":d.Count()}
-    rows,_:=d.db.Query(`SELECT status,COUNT(*) FROM events GROUP BY status`)
-    if rows!=nil{defer rows.Close();by:=map[string]int{};for rows.Next(){var s string;var c int;rows.Scan(&s,&c);by[s]=c};m["by_status"]=by}
-    return m
+type ErrorOccurrence struct {
+	ID          string `json:"id"`
+	Fingerprint string `json:"fingerprint"`
+	Message     string `json:"message"`
+	Stack       string `json:"stack"`
+	Metadata    string `json:"metadata"`
+	CreatedAt   string `json:"created_at"`
+}
+
+func Open(d string) (*DB, error) {
+	if err := os.MkdirAll(d, 0755); err != nil {
+		return nil, err
+	}
+	db, err := sql.Open("sqlite", filepath.Join(d, "seismograph.db")+"?_journal_mode=WAL&_busy_timeout=5000")
+	if err != nil {
+		return nil, err
+	}
+
+	db.Exec(`CREATE TABLE IF NOT EXISTS error_groups(
+		id TEXT PRIMARY KEY, fingerprint TEXT UNIQUE NOT NULL,
+		title TEXT NOT NULL, message TEXT DEFAULT '',
+		level TEXT DEFAULT 'error', source TEXT DEFAULT '',
+		stack TEXT DEFAULT '', metadata TEXT DEFAULT '{}',
+		status TEXT DEFAULT 'open', count INTEGER DEFAULT 1,
+		first_seen TEXT DEFAULT(datetime('now')),
+		last_seen TEXT DEFAULT(datetime('now')))`)
+
+	db.Exec(`CREATE TABLE IF NOT EXISTS error_occurrences(
+		id TEXT PRIMARY KEY, fingerprint TEXT NOT NULL,
+		message TEXT DEFAULT '', stack TEXT DEFAULT '',
+		metadata TEXT DEFAULT '{}',
+		created_at TEXT DEFAULT(datetime('now')))`)
+
+	db.Exec(`CREATE INDEX IF NOT EXISTS idx_occ_fp ON error_occurrences(fingerprint)`)
+
+	return &DB{db: db}, nil
+}
+
+func (d *DB) Close() error { return d.db.Close() }
+func genID() string        { return fmt.Sprintf("%d", time.Now().UnixNano()) }
+func now() string          { return time.Now().UTC().Format(time.RFC3339) }
+
+func fingerprint(title, source string) string {
+	h := sha256.Sum256([]byte(title + "|" + source))
+	return fmt.Sprintf("%x", h[:8])
+}
+
+// Ingest captures a new error, creating or updating the group
+func (d *DB) Ingest(title, message, level, source, stack, metadata string) (*ErrorEvent, error) {
+	fp := fingerprint(title, source)
+	ts := now()
+
+	if level == "" {
+		level = "error"
+	}
+	if metadata == "" {
+		metadata = "{}"
+	}
+
+	// Try to update existing group
+	res, _ := d.db.Exec(`UPDATE error_groups SET count=count+1, last_seen=?, message=?, stack=? WHERE fingerprint=?`,
+		ts, message, stack, fp)
+	rows, _ := res.RowsAffected()
+
+	if rows == 0 {
+		// New group
+		id := genID()
+		d.db.Exec(`INSERT INTO error_groups(id,fingerprint,title,message,level,source,stack,metadata,status,count,first_seen,last_seen)VALUES(?,?,?,?,?,?,?,?,?,?,?,?)`,
+			id, fp, title, message, level, source, stack, metadata, "open", 1, ts, ts)
+	}
+
+	// Record occurrence
+	occID := genID()
+	d.db.Exec(`INSERT INTO error_occurrences(id,fingerprint,message,stack,metadata,created_at)VALUES(?,?,?,?,?,?)`,
+		occID, fp, message, stack, metadata, ts)
+
+	return d.GetByFingerprint(fp), nil
+}
+
+func (d *DB) GetByFingerprint(fp string) *ErrorEvent {
+	var e ErrorEvent
+	if d.db.QueryRow(`SELECT id,fingerprint,title,message,level,source,stack,metadata,status,count,first_seen,last_seen FROM error_groups WHERE fingerprint=?`, fp).
+		Scan(&e.ID, &e.Fingerprint, &e.Title, &e.Message, &e.Level, &e.Source, &e.Stack, &e.Metadata, &e.Status, &e.Count, &e.FirstSeen, &e.LastSeen) != nil {
+		return nil
+	}
+	return &e
+}
+
+func (d *DB) Get(id string) *ErrorEvent {
+	var e ErrorEvent
+	if d.db.QueryRow(`SELECT id,fingerprint,title,message,level,source,stack,metadata,status,count,first_seen,last_seen FROM error_groups WHERE id=?`, id).
+		Scan(&e.ID, &e.Fingerprint, &e.Title, &e.Message, &e.Level, &e.Source, &e.Stack, &e.Metadata, &e.Status, &e.Count, &e.FirstSeen, &e.LastSeen) != nil {
+		return nil
+	}
+	return &e
+}
+
+func (d *DB) List(level, status, source string) []ErrorEvent {
+	where := "1=1"
+	args := []any{}
+	if level != "" {
+		where += " AND level=?"
+		args = append(args, level)
+	}
+	if status != "" {
+		where += " AND status=?"
+		args = append(args, status)
+	}
+	if source != "" {
+		where += " AND source=?"
+		args = append(args, source)
+	}
+	rows, _ := d.db.Query(`SELECT id,fingerprint,title,message,level,source,stack,metadata,status,count,first_seen,last_seen FROM error_groups WHERE `+where+` ORDER BY last_seen DESC`, args...)
+	if rows == nil {
+		return []ErrorEvent{}
+	}
+	defer rows.Close()
+	var out []ErrorEvent
+	for rows.Next() {
+		var e ErrorEvent
+		rows.Scan(&e.ID, &e.Fingerprint, &e.Title, &e.Message, &e.Level, &e.Source, &e.Stack, &e.Metadata, &e.Status, &e.Count, &e.FirstSeen, &e.LastSeen)
+		out = append(out, e)
+	}
+	if out == nil {
+		return []ErrorEvent{}
+	}
+	return out
+}
+
+func (d *DB) SetStatus(id, status string) error {
+	_, err := d.db.Exec(`UPDATE error_groups SET status=? WHERE id=?`, status, id)
+	return err
+}
+
+func (d *DB) Delete(id string) error {
+	var fp string
+	d.db.QueryRow(`SELECT fingerprint FROM error_groups WHERE id=?`, id).Scan(&fp)
+	if fp != "" {
+		d.db.Exec(`DELETE FROM error_occurrences WHERE fingerprint=?`, fp)
+	}
+	_, err := d.db.Exec(`DELETE FROM error_groups WHERE id=?`, id)
+	return err
+}
+
+func (d *DB) Occurrences(fp string) []ErrorOccurrence {
+	rows, _ := d.db.Query(`SELECT id,fingerprint,message,stack,metadata,created_at FROM error_occurrences WHERE fingerprint=? ORDER BY created_at DESC LIMIT 50`, fp)
+	if rows == nil {
+		return []ErrorOccurrence{}
+	}
+	defer rows.Close()
+	var out []ErrorOccurrence
+	for rows.Next() {
+		var o ErrorOccurrence
+		rows.Scan(&o.ID, &o.Fingerprint, &o.Message, &o.Stack, &o.Metadata, &o.CreatedAt)
+		out = append(out, o)
+	}
+	if out == nil {
+		return []ErrorOccurrence{}
+	}
+	return out
+}
+
+func (d *DB) Sources() []string {
+	rows, _ := d.db.Query(`SELECT DISTINCT source FROM error_groups WHERE source!='' ORDER BY source`)
+	if rows == nil {
+		return []string{}
+	}
+	defer rows.Close()
+	var out []string
+	for rows.Next() {
+		var s string
+		rows.Scan(&s)
+		out = append(out, s)
+	}
+	return out
+}
+
+func (d *DB) Stats() map[string]any {
+	var total, open, acked, resolved int
+	d.db.QueryRow(`SELECT COUNT(*) FROM error_groups`).Scan(&total)
+	d.db.QueryRow(`SELECT COUNT(*) FROM error_groups WHERE status='open'`).Scan(&open)
+	d.db.QueryRow(`SELECT COUNT(*) FROM error_groups WHERE status='acknowledged'`).Scan(&acked)
+	d.db.QueryRow(`SELECT COUNT(*) FROM error_groups WHERE status='resolved'`).Scan(&resolved)
+
+	byLevel := map[string]int{}
+	rows, _ := d.db.Query(`SELECT level, COUNT(*) FROM error_groups GROUP BY level`)
+	if rows != nil {
+		defer rows.Close()
+		for rows.Next() {
+			var l string
+			var c int
+			rows.Scan(&l, &c)
+			byLevel[l] = c
+		}
+	}
+
+	return map[string]any{
+		"total":    total,
+		"open":     open,
+		"acknowledged": acked,
+		"resolved": resolved,
+		"by_level": byLevel,
+	}
 }

@@ -1,40 +1,143 @@
 package server
-import ("encoding/json";"log";"net/http";"github.com/stockyard-dev/stockyard-seismograph/internal/store")
-type Server struct{db *store.DB;mux *http.ServeMux;limits Limits}
-func New(db *store.DB,limits Limits)*Server{s:=&Server{db:db,mux:http.NewServeMux(),limits:limits}
-s.mux.HandleFunc("GET /api/events",s.list)
-s.mux.HandleFunc("POST /api/events",s.create)
-s.mux.HandleFunc("GET /api/events/{id}",s.get)
-s.mux.HandleFunc("PUT /api/events/{id}",s.update)
-s.mux.HandleFunc("DELETE /api/events/{id}",s.del)
-s.mux.HandleFunc("GET /api/stats",s.stats)
-s.mux.HandleFunc("GET /api/health",s.health)
-s.mux.HandleFunc("GET /ui",s.dashboard);s.mux.HandleFunc("GET /ui/",s.dashboard);s.mux.HandleFunc("GET /",s.root);
-s.mux.HandleFunc("GET /api/tier",func(w http.ResponseWriter,r *http.Request){wj(w,200,map[string]any{"tier":s.limits.Tier,"upgrade_url":"https://stockyard.dev/seismograph/"})})
-return s}
-func(s *Server)ServeHTTP(w http.ResponseWriter,r *http.Request){s.mux.ServeHTTP(w,r)}
-func wj(w http.ResponseWriter,c int,v any){w.Header().Set("Content-Type","application/json");w.WriteHeader(c);json.NewEncoder(w).Encode(v)}
-func we(w http.ResponseWriter,c int,m string){wj(w,c,map[string]string{"error":m})}
-func(s *Server)root(w http.ResponseWriter,r *http.Request){if r.URL.Path!="/"{http.NotFound(w,r);return};http.Redirect(w,r,"/ui",302)}
-func(s *Server)list(w http.ResponseWriter,r *http.Request){
-    q:=r.URL.Query().Get("q")
-    filters:=map[string]string{}
-    if v:=r.URL.Query().Get("source");v!=""{filters["source"]=v}
-    if v:=r.URL.Query().Get("severity");v!=""{filters["severity"]=v}
-    if v:=r.URL.Query().Get("status");v!=""{filters["status"]=v}
-    if q!=""||len(filters)>0{wj(w,200,map[string]any{"events":oe(s.db.Search(q,filters))});return}
-    wj(w,200,map[string]any{"events":oe(s.db.List())})
+
+import (
+	"encoding/json"
+	"net/http"
+
+	"github.com/stockyard-dev/stockyard-seismograph/internal/store"
+)
+
+type Server struct {
+	db     *store.DB
+	mux    *http.ServeMux
+	limits Limits
 }
-func(s *Server)create(w http.ResponseWriter,r *http.Request){if s.limits.MaxItems>0{items:=s.db.List();if len(items)>=s.limits.MaxItems{we(w,402,"Free tier limit reached. Upgrade at https://stockyard.dev/seismograph/");return}};var e store.Event;json.NewDecoder(r.Body).Decode(&e);if e.Name==""{we(w,400,"name required");return};s.db.Create(&e);wj(w,201,s.db.Get(e.ID))}
-func(s *Server)get(w http.ResponseWriter,r *http.Request){e:=s.db.Get(r.PathValue("id"));if e==nil{we(w,404,"not found");return};wj(w,200,e)}
-func(s *Server)update(w http.ResponseWriter,r *http.Request){
-    existing:=s.db.Get(r.PathValue("id"));if existing==nil{we(w,404,"not found");return}
-    var patch store.Event;json.NewDecoder(r.Body).Decode(&patch);patch.ID=existing.ID;patch.CreatedAt=existing.CreatedAt
-    if patch.Name==""{patch.Name=existing.Name}
-    s.db.Update(&patch);wj(w,200,s.db.Get(patch.ID))
+
+func New(db *store.DB, limits Limits) *Server {
+	s := &Server{db: db, mux: http.NewServeMux(), limits: limits}
+
+	s.mux.HandleFunc("GET /api/errors", s.listErrors)
+	s.mux.HandleFunc("POST /api/errors", s.ingestError)
+	s.mux.HandleFunc("GET /api/errors/{id}", s.getError)
+	s.mux.HandleFunc("PATCH /api/errors/{id}/status", s.setStatus)
+	s.mux.HandleFunc("DELETE /api/errors/{id}", s.deleteError)
+	s.mux.HandleFunc("GET /api/errors/{id}/occurrences", s.listOccurrences)
+	s.mux.HandleFunc("GET /api/sources", s.listSources)
+	s.mux.HandleFunc("GET /api/stats", s.stats)
+	s.mux.HandleFunc("GET /api/health", s.health)
+	s.mux.HandleFunc("GET /api/tier", func(w http.ResponseWriter, r *http.Request) {
+		wj(w, 200, map[string]any{"tier": s.limits.Tier, "upgrade_url": "https://stockyard.dev/seismograph/"})
+	})
+	s.mux.HandleFunc("GET /ui", s.dashboard)
+	s.mux.HandleFunc("GET /ui/", s.dashboard)
+	s.mux.HandleFunc("GET /", s.root)
+
+	return s
 }
-func(s *Server)del(w http.ResponseWriter,r *http.Request){s.db.Delete(r.PathValue("id"));wj(w,200,map[string]string{"deleted":"ok"})}
-func(s *Server)stats(w http.ResponseWriter,r *http.Request){wj(w,200,s.db.Stats())}
-func(s *Server)health(w http.ResponseWriter,r *http.Request){wj(w,200,map[string]any{"status":"ok","service":"seismograph","events":s.db.Count()})}
-func oe[T any](s []T)[]T{if s==nil{return[]T{}};return s}
-func init(){log.SetFlags(log.LstdFlags|log.Lshortfile)}
+
+func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) { s.mux.ServeHTTP(w, r) }
+func wj(w http.ResponseWriter, c int, v any) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(c)
+	json.NewEncoder(w).Encode(v)
+}
+func we(w http.ResponseWriter, c int, m string) { wj(w, c, map[string]string{"error": m}) }
+func (s *Server) root(w http.ResponseWriter, r *http.Request) {
+	if r.URL.Path != "/" {
+		http.NotFound(w, r)
+		return
+	}
+	http.Redirect(w, r, "/ui", 302)
+}
+
+func (s *Server) listErrors(w http.ResponseWriter, r *http.Request) {
+	level := r.URL.Query().Get("level")
+	status := r.URL.Query().Get("status")
+	source := r.URL.Query().Get("source")
+	wj(w, 200, map[string]any{"errors": s.db.List(level, status, source)})
+}
+
+func (s *Server) ingestError(w http.ResponseWriter, r *http.Request) {
+	if s.limits.MaxItems > 0 {
+		all := s.db.List("", "", "")
+		if len(all) >= s.limits.MaxItems {
+			we(w, 402, "Free tier limit reached. Upgrade at https://stockyard.dev/seismograph/")
+			return
+		}
+	}
+	var body struct {
+		Title    string `json:"title"`
+		Message  string `json:"message"`
+		Level    string `json:"level"`
+		Source   string `json:"source"`
+		Stack    string `json:"stack"`
+		Metadata string `json:"metadata"`
+	}
+	json.NewDecoder(r.Body).Decode(&body)
+	if body.Title == "" {
+		we(w, 400, "title required")
+		return
+	}
+	evt, err := s.db.Ingest(body.Title, body.Message, body.Level, body.Source, body.Stack, body.Metadata)
+	if err != nil {
+		we(w, 500, err.Error())
+		return
+	}
+	wj(w, 201, evt)
+}
+
+func (s *Server) getError(w http.ResponseWriter, r *http.Request) {
+	e := s.db.Get(r.PathValue("id"))
+	if e == nil {
+		we(w, 404, "not found")
+		return
+	}
+	wj(w, 200, e)
+}
+
+func (s *Server) setStatus(w http.ResponseWriter, r *http.Request) {
+	e := s.db.Get(r.PathValue("id"))
+	if e == nil {
+		we(w, 404, "not found")
+		return
+	}
+	var body struct {
+		Status string `json:"status"`
+	}
+	json.NewDecoder(r.Body).Decode(&body)
+	valid := map[string]bool{"open": true, "acknowledged": true, "resolved": true, "ignored": true}
+	if !valid[body.Status] {
+		we(w, 400, "status must be: open, acknowledged, resolved, ignored")
+		return
+	}
+	s.db.SetStatus(e.ID, body.Status)
+	wj(w, 200, s.db.Get(e.ID))
+}
+
+func (s *Server) deleteError(w http.ResponseWriter, r *http.Request) {
+	if s.db.Get(r.PathValue("id")) == nil {
+		we(w, 404, "not found")
+		return
+	}
+	s.db.Delete(r.PathValue("id"))
+	wj(w, 200, map[string]string{"status": "deleted"})
+}
+
+func (s *Server) listOccurrences(w http.ResponseWriter, r *http.Request) {
+	e := s.db.Get(r.PathValue("id"))
+	if e == nil {
+		we(w, 404, "not found")
+		return
+	}
+	wj(w, 200, map[string]any{"occurrences": s.db.Occurrences(e.Fingerprint)})
+}
+
+func (s *Server) listSources(w http.ResponseWriter, r *http.Request) {
+	wj(w, 200, map[string]any{"sources": s.db.Sources()})
+}
+
+func (s *Server) stats(w http.ResponseWriter, r *http.Request) { wj(w, 200, s.db.Stats()) }
+func (s *Server) health(w http.ResponseWriter, r *http.Request) {
+	stats := s.db.Stats()
+	wj(w, 200, map[string]any{"service": "seismograph", "status": "ok", "errors": stats["total"], "open": stats["open"]})
+}
